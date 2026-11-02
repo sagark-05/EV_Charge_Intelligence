@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local source datasets and generated record-level exports
+*.csv
+
+# Local temporary files and editor backups
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+/tmp/
