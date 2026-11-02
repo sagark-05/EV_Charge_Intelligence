@@ -1,0 +1,271 @@
+{
+  "coverage": {
+    "earliest_session_start": "01-01-2024 00:00",
+    "latest_session_start": "30-12-2025 23:53",
+    "first_date": "2024-01-01",
+    "last_date": "2025-12-30",
+    "inclusive_calendar_days": 730,
+    "observed_session_dates": 730,
+    "calendar_average_assumption": "Future averages assume complete collection across the inclusive range, including zero-session dates.",
+    "limitation": "Observed timestamps do not verify collection uptime or complete first/last-day coverage. Boundary months may be partial; timezone is unverified."
+  },
+  "input_session_count": 200000,
+  "valid_energy_session_count": 200000,
+  "invalid_energy_session_count": 0,
+  "total_recorded_energy_kwh": 9493219.610000003,
+  "avg_sessions_per_day": 273.972602739726,
+  "avg_recorded_energy_per_valid_session_kwh": 47.466098050000014,
+  "avg_recorded_energy_per_day_kwh": 13004.410424657539,
+  "input_validation": {
+    "energy_validity_counts": {
+      "valid": 200000,
+      "missing": 0,
+      "nonnumeric": 0,
+      "nonfinite": 0,
+      "negative": 0
+    },
+    "declared_energy_validity_mismatch_count": 0,
+    "energy_policy": "Recomputed numeric status determines eligibility; declared-status mismatches are reported, never used to drop demand rows.",
+    "temporal_policy": "All analysis calendar features are recomputed from explicitly parsed Session_Start; supplied derived features are not trusted or modified.",
+    "plausibility_flags": {
+      "Energy_Exceeds_Battery_Capacity": {
+        "true": 49101,
+        "false": 150899,
+        "not_evaluable": 0
+      },
+      "Energy_Exceeds_Nominal_Charger_Energy": {
+        "true": 71740,
+        "false": 128260,
+        "not_evaluable": 0
+      }
+    },
+    "overlapping_flags_count": 23488,
+    "plausibility_union_count": 97353,
+    "valid_energy_plausibility_union_count": 97353
+  },
+  "output_row_counts": {
+    "hourly_demand": 24,
+    "daily_demand": 730,
+    "weekday_demand": 7,
+    "weekday_weekend_demand": 2,
+    "day_hour_demand": 168,
+    "monthly_demand": 24,
+    "monthly_energy_sensitivity": 24
+  },
+  "period_extremes_metric": "avg_sessions_per_day; all exact ties among categories with represented dates, including zero-demand categories",
+  "empty_group_policy": "Session counts are zero for absent categories. Demand averages are zero when calendar_days > 0, undefined when calendar_days = 0. Energy totals/averages are missing without valid energy observations; energy_observation_status distinguishes no_sessions from no_valid_energy.",
+  "period_extremes": {
+    "hourly_demand": {
+      "busiest": {
+        "avg_sessions_per_day": 11.616438356164384,
+        "periods": [
+          {
+            "Charging_Hour": 8
+          }
+        ]
+      },
+      "lowest": {
+        "avg_sessions_per_day": 11.14931506849315,
+        "periods": [
+          {
+            "Charging_Hour": 9
+          }
+        ]
+      }
+    },
+    "daily_demand": {
+      "busiest": {
+        "avg_sessions_per_day": 344.0,
+        "periods": [
+          {
+            "Charging_Date": "2024-01-26"
+          }
+        ]
+      },
+      "lowest": {
+        "avg_sessions_per_day": 230.0,
+        "periods": [
+          {
+            "Charging_Date": "2025-10-11"
+          }
+        ]
+      }
+    },
+    "weekday_demand": {
+      "busiest": {
+        "avg_sessions_per_day": 276.8269230769231,
+        "periods": [
+          {
+            "Weekday_Index": 2,
+            "Weekday_Name": "Wednesday"
+          }
+        ]
+      },
+      "lowest": {
+        "avg_sessions_per_day": 271.1442307692308,
+        "periods": [
+          {
+            "Weekday_Index": 6,
+            "Weekday_Name": "Sunday"
+          }
+        ]
+      }
+    },
+    "weekday_weekend_demand": {
+      "busiest": {
+        "avg_sessions_per_day": 274.5785440613027,
+        "periods": [
+          {
+            "Day_Type": "Weekday"
+          }
+        ]
+      },
+      "lowest": {
+        "avg_sessions_per_day": 272.4519230769231,
+        "periods": [
+          {
+            "Day_Type": "Weekend"
+          }
+        ]
+      }
+    },
+    "day_hour_demand": {
+      "busiest": {
+        "avg_sessions_per_day": 12.26923076923077,
+        "periods": [
+          {
+            "Weekday_Index": 2,
+            "Weekday_Name": "Wednesday",
+            "Charging_Hour": 2
+          }
+        ]
+      },
+      "lowest": {
+        "avg_sessions_per_day": 10.523809523809524,
+        "periods": [
+          {
+            "Weekday_Index": 1,
+            "Weekday_Name": "Tuesday",
+            "Charging_Hour": 9
+          }
+        ]
+      }
+    },
+    "monthly_demand": {
+      "busiest": {
+        "avg_sessions_per_day": 281.1333333333333,
+        "periods": [
+          {
+            "Year_Month": "2025-12"
+          }
+        ]
+      },
+      "lowest": {
+        "avg_sessions_per_day": 270.0,
+        "periods": [
+          {
+            "Year_Month": "2024-04"
+          }
+        ]
+      }
+    }
+  },
+  "hourly_relative_demand_index": {
+    "definition": "Hourly average sessions/day divided by mean of all 24 hourly averages; project-defined relative session-start indicator.",
+    "minimum": 0.97668,
+    "maximum": 1.0176
+  },
+  "partial_boundary_months": [
+    "2025-12"
+  ],
+  "sensitivity": {
+    "excluded_session_count": 97353,
+    "retained_session_count": 102647,
+    "retained_valid_energy_session_count": 102647,
+    "retained_recorded_energy_kwh": 3648439.11,
+    "excluded_recorded_energy_kwh": 5844780.499999999
+  },
+  "reconciliation": {
+    "tables": {
+      "hourly_demand": {
+        "session_count": true,
+        "valid_energy_count": true,
+        "invalid_energy_count": true,
+        "energy_total": true,
+        "row_count_partition": true
+      },
+      "daily_demand": {
+        "session_count": true,
+        "valid_energy_count": true,
+        "invalid_energy_count": true,
+        "energy_total": true,
+        "row_count_partition": true
+      },
+      "weekday_demand": {
+        "session_count": true,
+        "valid_energy_count": true,
+        "invalid_energy_count": true,
+        "energy_total": true,
+        "row_count_partition": true
+      },
+      "weekday_weekend_demand": {
+        "session_count": true,
+        "valid_energy_count": true,
+        "invalid_energy_count": true,
+        "energy_total": true,
+        "row_count_partition": true
+      },
+      "day_hour_demand": {
+        "session_count": true,
+        "valid_energy_count": true,
+        "invalid_energy_count": true,
+        "energy_total": true,
+        "row_count_partition": true
+      },
+      "monthly_demand": {
+        "session_count": true,
+        "valid_energy_count": true,
+        "invalid_energy_count": true,
+        "energy_total": true,
+        "row_count_partition": true
+      }
+    },
+    "dimensions_and_ordering": {
+      "hourly": true,
+      "daily": true,
+      "weekday": true,
+      "weekday_weekend": true,
+      "day_hour": true,
+      "monthly": true
+    },
+    "sensitivity": {
+      "demand_unchanged": true,
+      "row_partition": true,
+      "valid_energy_partition": true,
+      "energy_partition": true
+    },
+    "all_passed": true
+  },
+  "limitations": [
+    "shared by team member; original source and licence unverified; collection methodology and timezone unverified.",
+    "Complete collection across the inclusive date range, including zero-session dates, is assumed, not verified uptime.",
+    "First/last days may be partially observed; full calendar boundary months do not prove full collection.",
+    "Full recorded session energy is assigned to session-start time, not a measured hourly electricity-load profile.",
+    "Session counts and the project-defined relative index do not establish congestion or true utilization; Peak_Hour labels are unused.",
+    "Sensitivity exclusions can change sample composition; this is not corrected or ground-truth data.",
+    "Blank plausibility flags mean not evaluable; such rows are retained unless the other flag is true.",
+    "Station mappings are inconsistent; no station or geographic comparisons are made."
+  ],
+  "source_integrity": {
+    "cleaned": {
+      "sha256_before": "fa9d6b8401f891f15f47a94289362312a9072ecfe3f2e5207c76fd8c9cdcc50a",
+      "sha256_after": "fa9d6b8401f891f15f47a94289362312a9072ecfe3f2e5207c76fd8c9cdcc50a",
+      "unchanged": true
+    },
+    "raw": {
+      "sha256_before": "17bf329c2db9b3ee686a441d705750b8df006b0a2e88bb05d590e021b58739cf",
+      "sha256_after": "17bf329c2db9b3ee686a441d705750b8df006b0a2e88bb05d590e021b58739cf",
+      "unchanged": true
+    }
+  }
+}

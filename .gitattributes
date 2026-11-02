@@ -1,0 +1,2 @@
+# Matplotlib emits trailing spaces inside generated SVG path data.
+outputs/demand/figures/*.svg whitespace=-blank-at-eol
