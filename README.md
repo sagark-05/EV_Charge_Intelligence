@@ -2,88 +2,255 @@
 
 **A Data-Driven Analysis of EV Charging Demand, Utilization and Peak-Time Congestion**
 
-The agreed project covers descriptive Python analysis and Power BI visualization of session-start demand, recorded energy, station activity and potential congestion indicators. ML is not required. See the [project plan](docs/project_plan.md) for responsibilities, metric definitions, limitations, phases and remaining work.
+EVCharge Intelligence uses Python analysis and Power BI visualization to explore EV charging-session demand, recorded energy, station activity and potential congestion indicators.
 
-The current implementation is Member 1's preparation module, implemented by Sagar K (PES2UG24CS424), who also owns Member 2's temporal demand/energy module. He is covering preparation because Member 1's laptop is unavailable; module ownership and implementation contributions remain separate. Member 2 temporal demand/recorded-energy calculations are implemented. Member 2 visualizations, analysis notebook and concise findings are also implemented. Station analysis and Power BI integration remain planned work.
+The current implementation includes data preparation, quality validation, temporal demand and energy analysis, seven visualizations, and executable Jupyter notebooks. Station analysis and Power BI integration remain planned.
 
-Source status: **shared by team member; original source and licence unverified**. Collection methodology and timezone are also **unverified**; no claim is made that the dataset is real-world or synthetic.
+See the [project plan](docs/project_plan.md) for scope, metric definitions and implementation phases.
 
-## Preparation: existing implementation
+## Dataset
 
-From the repository root (Python 3.9 or newer):
+Place the original dataset at:
+
+```text
+data/raw/EV_Dataset.csv
+```
+
+The supplied dataset contains **200,000 charging sessions and 38 original columns**.
+
+**Source status:** shared by a team member; original source, collection methodology, reuse licence and timezone are unverified.
+
+Dataset CSVs are excluded from Git. Obtain the input file separately before running the project.
+
+## Setup
+
+Run from the repository root using Python 3.9 or newer:
 
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pytest -q
-.venv/bin/python src/data_preparation.py
-.venv/bin/python scripts/execute_notebook.py
-sha256sum data/raw/EV_Dataset.csv
 ```
 
-Optional paths: `--input PATH --processed-dir PATH --quality-dir PATH`.
-The source CSV is read only. SHA-256 values before and after reading are recorded in the report. All dataset CSVs, environments and caches are ignored by Git; supply the raw CSV locally.
+The commands below use the Ubuntu/Linux virtual-environment path.
 
-Outputs:
+## Run the Pipeline
 
-- `data/processed/charging_sessions.csv`: accepted records, original columns plus source row number, derived time features, measurement validity and energy plausibility flags.
-- `data/processed/rejected_sessions.csv`: quarantined records with source row number and explicit reasons.
-- `outputs/data_quality/flagged_records.csv`: all records with any quality issue, including rejected records.
-- `outputs/data_quality/quality_report.json`: aggregate counts, policies and hashes; contains no full records.
+Run these commands in order:
 
-Exact duplicate rows are compared across all original text fields; the first occurrence is retained. Every remaining record sharing a nonblank session ID is rejected as a conflict. Missing IDs, invalid timestamps and end-before-start records are also rejected. Counts and source row numbers refer to CSV records (header is row 1), not physical lines inside quoted multiline fields. Removed duplicate copies are counted, not repeated in the rejected export.
+```bash
+.venv/bin/python src/data_preparation.py
+.venv/bin/python src/demand_analysis.py
+.venv/bin/python src/demand_visualization.py
+```
 
-Blank/whitespace-only fields are missing. Other source text is preserved, including identifier whitespace and literal strings such as `NA`; no identifier normalization, station mapping, timezone conversion or measurement imputation is performed. Station conflicts use all deduplicated rows, including rejected ones, and ignore blank mapping values. Calendar, duration, missing-field and station issues are flagged without changing source values. Duration tolerance is 0.01 minute; timestamps have minute precision. Weekday names must match English full names; month must be numeric 1–12. Timestamp values must strictly match `DD-MM-YYYY HH:MM` and a valid calendar date.
+Execute the notebooks:
 
-See [data dictionary](docs/data_dictionary.md) for field definitions. Review flags before choosing fields for later analysis; acceptance establishes usable identity and timestamps, not correctness of every measurement.
+```bash
+.venv/bin/python scripts/execute_notebook.py notebooks/01_preprocessing.ipynb
+.venv/bin/python scripts/execute_notebook.py notebooks/02_demand_analysis.ipynb
+.venv/bin/python scripts/execute_notebook.py notebooks/03_demand_analysis_code_and_charts.ipynb
+```
 
-## Status and interpretation
-
-The existing [quality report](outputs/data_quality/quality_report.json) reports 200,000 input and accepted rows, zero duplicate removals/rejections, and balanced reconciliation. All 1,000 station IDs have multiple names, cities and states, flagging all 200,000 records. Station comparisons therefore depend on identifier reliability; do not guess mappings or make geographic recommendations from them. Reported hashes match. The pipeline and preprocessing notebook have been executed with the extended Phase 1 implementation.
-
-Phase 1 now includes derived time features and an executed [preprocessing notebook](notebooks/01_preprocessing.ipynb), which calls the existing preparation module. The runner uses the active Python interpreter and saves compact outputs without timing metadata. Notebook paths support repository-root or notebooks-directory execution. To rerun from `notebooks/`, use `../.venv/bin/python ../scripts/execute_notebook.py`.
-
-Accepted starts span `01-01-2024 00:00` through `30-12-2025 23:53`: 730 inclusive dates, all with observed starts. Future calendar averages assume complete collection over that range, including zero-session dates; timestamps do not verify collection uptime or complete first/last-day coverage.
-
-Both energy and queue time have 200,000 numerically valid values and zero missing/nonnumeric/nonfinite/negative values. Separate plausibility concerns flag 49,101 sessions above battery capacity and 71,740 above nominal charger energy (elapsed timestamp duration). Concerns can overlap and do not exclude demand or numerically valid energy. No measurements are corrected. See the dictionary for nullable flags and validity meanings.
-
-Derived features are always recomputed from explicitly parsed timestamps, including when feature columns already exist. Original timestamp formats remain unchanged. Source origin/licence, collection methodology, timezone and reliable station mappings remain unresolved evidence limitations. Session-start demand does not establish congestion or true utilization, and supplied `Peak_Hour` labels do not prove observed peaks. Station analysis and Power BI remain later work.
-
-## Temporal analysis (Member 2)
-
-After preparation, run from the repository root:
+Run tests:
 
 ```bash
 .venv/bin/python -m pytest -q
-.venv/bin/python src/demand_analysis.py
+```
+
+Verify input fingerprints:
+
+```bash
 sha256sum data/raw/EV_Dataset.csv data/processed/charging_sessions.csv
 ```
 
-Optional arguments: `--input PATH --output-dir PATH --raw-input PATH`. Defaults use the cleaned CSV and `outputs/demand/`; the repository raw CSV is fingerprinted if available. No new dependencies are required. Both inputs remain unchanged.
+## Data Preparation
 
-Outputs: `hourly_demand.csv`, `daily_demand.csv`, `weekday_demand.csv`, `weekday_weekend_demand.csv`, `day_hour_demand.csv`, `monthly_demand.csv`, `monthly_energy_sensitivity.csv`, and aggregate `analysis_summary.json`. See [demand methodology](docs/demand_methodology.md) for formulas, missing-energy semantics, calendar denominators and the sensitivity scenario.
+The preparation pipeline validates session identity, timestamps, duration, calendar fields, station mappings, and energy/queue measurements.
 
-The execution on 200,000 sessions reports 9,493,219.61 kWh recorded energy (all measurements numerically valid), 273.97 sessions/day and 47.47 kWh/valid-energy session. Hourly relative demand ranges from 0.97668 to 1.01760: a nearly uniform profile, with hour 08 highest and hour 09 lowest. December 2025 is a partial boundary month. Energy is assigned to session-start time and does not represent measured hourly grid load.
+It preserves the original CSV and exports:
 
-The sensitivity scenario excludes the union of 97,353 plausibility-flagged sessions (23,488 overlap), retaining 102,647 sessions and 3,648,439.11 kWh. Baseline demand counts never change. This is not corrected data; exclusions can change sample composition. All six baseline tables reconcile counts and energy independently, with fixed category grids and an inclusive calendar.
+| Output | Contents |
+|---|---|
+| `data/processed/charging_sessions.csv` | Accepted records, original columns, derived features and quality flags |
+| `data/processed/rejected_sessions.csv` | Quarantined records with source row numbers and reasons |
+| `outputs/data_quality/flagged_records.csv` | Records with quality issues, including rejected records |
+| `outputs/data_quality/quality_report.json` | Aggregate counts, policies, coverage and hashes |
 
-## Member 2 visualizations and analysis notebook
+### Validation Rules
 
-```bash
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pytest -q
-.venv/bin/python src/demand_visualization.py
-.venv/bin/python scripts/execute_notebook.py notebooks/02_demand_analysis.ipynb
+- Exact duplicate rows are compared across original text fields; the first occurrence is retained.
+- After exact deduplication, remaining records sharing a nonblank session ID are rejected as conflicts.
+- Missing IDs, invalid timestamps and end-before-start records are rejected.
+- Timestamps must match `DD-MM-YYYY HH:MM` and represent valid dates.
+- Duration comparisons use a tolerance of 0.01 minute.
+- Missing fields, duration/calendar mismatches and station inconsistencies are flagged without guessed corrections.
+- Blank or whitespace-only fields are treated as missing. Other source text is preserved.
+- No identifier normalization, timezone conversion or measurement imputation is performed.
+
+Source row numbers identify CSV records, with the header counted as row 1. Removed duplicate copies are counted separately rather than repeated in the rejected export.
+
+### Derived Features
+
+- `Charging_Date`
+- `Charging_Hour`
+- `Weekday_Index`
+- `Weekday_Name`
+- `Is_Weekend`
+- `Year_Month`
+- `Calculated_Session_Duration_Min`
+
+Features are deterministically recomputed from parsed timestamps. Original timestamp formats remain unchanged.
+
+Energy and queue measurements are numerically valid when finite and nonnegative. Energy above battery capacity or nominal charger energy is flagged separately as a plausibility concern; these flags do not automatically remove sessions.
+
+Optional preparation arguments:
+
+```text
+--input PATH --processed-dir PATH --quality-dir PATH
 ```
 
-The plotting CLI reads existing verified summaries (`--input-dir`, default `outputs/demand/`) and saves seven figures to `figures/` (`--output-dir` can override): hourly demand, daily demand with trailing 7-day mean, weekday/weekend panels, weekday–hour heatmap, monthly demand, hourly/monthly recorded-energy panels, and monthly energy sensitivity with retained-sample context. Each is available as 300-dpi PNG and SVG; no aggregation logic is duplicated.
+See the [data dictionary](docs/data_dictionary.md) for definitions and detailed policies.
 
-Open [02_demand_analysis.ipynb](notebooks/02_demand_analysis.ipynb) for compact tables, linked figures and interpretations; keep `outputs/demand/figures/` beside the repository because images are linked rather than embedded. The notebook imports existing analysis/plotting functions, revalidates cleaned data against saved summaries and checks protected file hashes. It resolves paths from repository root or `notebooks/`. The notebook runner still defaults to preprocessing when no notebook argument is supplied.
+## Temporal Demand and Energy Analysis
 
-See [Member 2 findings](docs/member2_findings.md) for the concise results. Weekdays average 274.58 starts/day versus 272.45 on weekends. Monthly demand is 270.00–281.13/day; the highest month is partial December 2025. Hourly demand remains nearly uniform. The sensitivity retains 51.32% of valid-energy sessions and 38.43% of recorded energy; sample composition differs and this is not corrected data. Zero-based axes and a sequential heatmap avoid exaggerating these descriptive differences.
+The analysis measures session starts and recorded energy by:
 
-All seven rendered figures were visually inspected for clipping, overlap and readability. Raw/cleaned files and Phase 2 summaries are preserved. Station/queue analysis, Power BI integration and the final individual write-up are outside this step.
+- Hour of day
+- Calendar date
+- Day of week
+- Weekday versus weekend
+- Weekday–hour combination
+- Year and month
 
-For executable plotting code with seven embedded inline charts, open [03_demand_analysis_code_and_charts.ipynb](notebooks/03_demand_analysis_code_and_charts.ipynb). It imports existing analysis/layout helpers, needs no saved chart images, and preserves the original notebook and figure exports. Run it with `.venv/bin/python scripts/execute_notebook.py notebooks/03_demand_analysis_code_and_charts.ipynb`.
+It exports these files under `outputs/demand/`:
 
-See [team handoff](docs/team_handoff.md) for dataset transfer, exact reproduction commands, reference totals, and inputs for the remaining station and Power BI work.
+```text
+hourly_demand.csv
+daily_demand.csv
+weekday_demand.csv
+weekday_weekend_demand.csv
+day_hour_demand.csv
+monthly_demand.csv
+monthly_energy_sensitivity.csv
+analysis_summary.json
+```
+
+Metrics include session counts, represented calendar days, average sessions/day, valid-energy counts, total recorded energy, average energy/session and average energy/day.
+
+### Interpretation Rules
+
+- Calendar averages assume complete collection between the earliest and latest observed dates.
+- Zero-session dates are included, but timestamps do not establish collection uptime.
+- Weekday/weekend comparisons use their respective calendar-day counts.
+- Year-months are kept separate, and partial boundary months are identified.
+- Full session energy is attributed to session-start time. It is not measured hourly grid load.
+- Invalid energy does not remove an otherwise valid session from demand analysis.
+- The hourly relative demand index compares each hour’s average with the mean across all 24 hours.
+- Session-start demand alone does not establish congestion or true utilization.
+
+Optional analysis arguments:
+
+```text
+--input PATH --output-dir PATH --raw-input PATH
+```
+
+See [demand methodology](docs/demand_methodology.md) for formulas, missing-energy handling and reconciliation checks.
+
+## Visualizations and Notebooks
+
+Seven figures are exported as **300-dpi PNG and SVG** files under:
+
+```text
+outputs/demand/figures/
+```
+
+They cover:
+
+1. Hourly demand
+2. Daily demand with a trailing seven-day mean
+3. Weekday and weekday/weekend comparisons
+4. Weekday–hour heatmap
+5. Monthly demand
+6. Hourly and monthly recorded-energy profiles
+7. Monthly energy sensitivity comparison
+
+The plotting CLI reads the existing summary tables. Optional arguments:
+
+```text
+--input-dir PATH --output-dir PATH
+```
+
+| Notebook | Purpose |
+|---|---|
+| [01_preprocessing.ipynb](notebooks/01_preprocessing.ipynb) | Preparation workflow and quality summaries |
+| [02_demand_analysis.ipynb](notebooks/02_demand_analysis.ipynb) | Compact tables, linked charts and interpretations |
+| [03_demand_analysis_code_and_charts.ipynb](notebooks/03_demand_analysis_code_and_charts.ipynb) | Executable plotting code with seven embedded chart outputs |
+
+Keep the repository’s `outputs/demand/figures/` directory when sharing the linked-chart notebook. The embedded-chart notebook can display its saved outputs without those image files; rerunning requires the documented data and dependencies.
+
+Notebook paths support execution from the repository root or `notebooks/`. The notebook runner defaults to preprocessing when no notebook argument is supplied.
+
+## Recorded Results
+
+The completed execution reports:
+
+| Metric | Result |
+|---|---:|
+| Accepted sessions | 200,000 |
+| Rejected sessions | 0 |
+| Exact duplicates removed | 0 |
+| Represented calendar days | 730 |
+| Average session starts/day | 273.97 |
+| Total recorded energy | 9,493,219.61 kWh |
+| Average recorded energy/valid-energy session | 47.47 kWh |
+| Weekday starts/day | 274.58 |
+| Weekend starts/day | 272.45 |
+
+Observed starts span **1 January 2024, 00:00 to 30 December 2025, 23:53**.
+
+Hourly demand is nearly uniform: the relative index ranges from **0.97668 to 1.01760**. The highest aggregate count is at **08:00**, with 8,480 starts; the lowest is at **09:00**, with 8,139 starts.
+
+Monthly demand ranges from **270.00 to 281.13 starts/day**. The highest month is partial December 2025, which should not be treated as evidence of a seasonal peak.
+
+See [Demand and Energy Findings](docs/member2_findings.md) for interpretations.
+
+## Data Quality and Limitations
+
+- All 1,000 station IDs have multiple station names, cities and states. Station comparisons depend on identifier reliability; geographic recommendations are unsupported by these mappings.
+- Energy and queue values are numerically valid, but numerical validity does not establish measurement accuracy.
+- Energy plausibility concerns affect 49,101 sessions above battery capacity and 71,740 above nominal charger energy.
+- These checks overlap in 23,488 sessions, affecting **97,353 unique sessions**.
+- The sensitivity scenario excludes their union, retaining **102,647 sessions** and **3,648,439.11 kWh**.
+- This retains **51.32% of sessions** and **38.43% of recorded energy**. It is an alternative sample, not corrected or verified data.
+- Baseline session-demand counts remain unchanged.
+- Source provenance, licence, timezone and collection completeness remain unverified.
+- Supplied `Peak_Hour` labels are not used as proof of observed demand peaks.
+- Connected occupancy, active charging, delivered energy, session starts and queue time are different measurements.
+
+## Research Basis
+
+Baek, K., Lee, E., & Kim, J. (2024). *A dataset for multi-faceted analysis of electric vehicle charging transactions*. Scientific Data, 11, 262.
+
+https://doi.org/10.1038/s41597-024-02942-9
+
+The project adapts the paper’s temporal charging-pattern analysis ideas. The paper’s dataset is separate from the supplied CSV. Our session-start metrics differ from its connection/coupling measurements; calendar normalization and the relative demand index are project design choices.
+
+## Verification
+
+The latest reported local verification includes:
+
+- **49 passing tests**
+- Executed and validated notebooks
+- Independent session-count and energy reconciliation across all six baseline summary tables
+- Verified sensitivity partitions and temporal category ordering
+- Visual inspection of all seven figures
+- Unchanged raw and cleaned input hashes
+- Passing `git diff --check`
+
+These are local verification results, not a claim that GitHub Actions checks are configured.
+
+## Team Handoff
+
+See [team handoff](docs/team_handoff.md) for dataset transfer, reproduction commands, reference totals and integration guidance.
+
+Remaining project work includes station activity/congestion-indicator analysis and Power BI integration. Interactive dashboard measures should use appropriate session-level data and calendar denominators rather than applying fixed aggregate averages under incompatible filters.
