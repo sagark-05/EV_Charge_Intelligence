@@ -4,11 +4,11 @@
 
 The agreed project covers descriptive Python analysis and Power BI visualization of session-start demand, recorded energy, station activity and potential congestion indicators. ML is not required. See the [project plan](docs/project_plan.md) for responsibilities, metric definitions, limitations, phases and remaining work.
 
-The current implementation is Member 1's preparation module, implemented by Sagar K (PES2UG24CS424), who also owns Member 2's temporal demand/energy module. He is covering preparation because Member 1's laptop is unavailable; module ownership and implementation contributions remain separate. Member 2 temporal demand/recorded-energy calculations are implemented. Member 2 visualizations, analysis notebook and concise findings are also implemented. Station analysis and Power BI integration remain planned work.
+The Data Preparation module is implemented by Sagar K (PES2UG24CS424), who also owns the Temporal Demand and Energy Analysis module. He is covering preparation because the Data Preparation module owner's laptop is unavailable; module ownership and implementation contributions remain separate. Temporal Demand and Energy Analysis calculations, visualizations, analysis notebook and concise findings are implemented. Station analysis and Power BI integration remain planned work.
 
 Source status: **shared by team member; original source and licence unverified**. Collection methodology and timezone are also **unverified**; no claim is made that the dataset is real-world or synthetic.
 
-## Preparation: existing implementation
+## Data Preparation
 
 From the repository root (Python 3.9 or newer):
 
@@ -49,7 +49,7 @@ Both energy and queue time have 200,000 numerically valid values and zero missin
 
 Derived features are always recomputed from explicitly parsed timestamps, including when feature columns already exist. Original timestamp formats remain unchanged. Source origin/licence, collection methodology, timezone and reliable station mappings remain unresolved evidence limitations. Session-start demand does not establish congestion or true utilization, and supplied `Peak_Hour` labels do not prove observed peaks. Station analysis and Power BI remain later work.
 
-## Temporal analysis (Member 2)
+## Temporal Demand and Energy Analysis
 
 After preparation, run from the repository root:
 
@@ -67,7 +67,7 @@ The execution on 200,000 sessions reports 9,493,219.61 kWh recorded energy (all 
 
 The sensitivity scenario excludes the union of 97,353 plausibility-flagged sessions (23,488 overlap), retaining 102,647 sessions and 3,648,439.11 kWh. Baseline demand counts never change. This is not corrected data; exclusions can change sample composition. All six baseline tables reconcile counts and energy independently, with fixed category grids and an inclusive calendar.
 
-## Member 2 visualizations and analysis notebook
+## Temporal Demand and Energy Analysis: visualizations and notebook
 
 ```bash
 .venv/bin/python -m pip install -r requirements.txt
@@ -80,7 +80,7 @@ The plotting CLI reads existing verified summaries (`--input-dir`, default `outp
 
 Open [02_demand_analysis.ipynb](notebooks/02_demand_analysis.ipynb) for compact tables, linked figures and interpretations; keep `outputs/demand/figures/` beside the repository because images are linked rather than embedded. The notebook imports existing analysis/plotting functions, revalidates cleaned data against saved summaries and checks protected file hashes. It resolves paths from repository root or `notebooks/`. The notebook runner still defaults to preprocessing when no notebook argument is supplied.
 
-See [Member 2 findings](docs/member2_findings.md) for the concise results. Weekdays average 274.58 starts/day versus 272.45 on weekends. Monthly demand is 270.00–281.13/day; the highest month is partial December 2025. Hourly demand remains nearly uniform. The sensitivity retains 51.32% of valid-energy sessions and 38.43% of recorded energy; sample composition differs and this is not corrected data. Zero-based axes and a sequential heatmap avoid exaggerating these descriptive differences.
+See [Temporal Demand and Energy Analysis findings](docs/member2_findings.md) for the concise results. Weekdays average 274.58 starts/day versus 272.45 on weekends. Monthly demand is 270.00–281.13/day; the highest month is partial December 2025. Hourly demand remains nearly uniform. The sensitivity retains 51.32% of valid-energy sessions and 38.43% of recorded energy; sample composition differs and this is not corrected data. Zero-based axes and a sequential heatmap avoid exaggerating these descriptive differences.
 
 All seven rendered figures were visually inspected for clipping, overlap and readability. Raw/cleaned files and Phase 2 summaries are preserved. Station/queue analysis, Power BI integration and the final individual write-up are outside this step.
 
