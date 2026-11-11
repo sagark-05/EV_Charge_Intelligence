@@ -4,7 +4,7 @@
 
 EVCharge Intelligence uses Python analysis and Power BI visualization to explore EV charging-session demand, recorded energy, station activity and potential congestion indicators.
 
-The current implementation includes data preparation, quality validation, temporal demand and energy analysis, seven visualizations, and executable Jupyter notebooks. Station analysis and Power BI integration remain planned.
+The current implementation includes data preparation, quality validation, temporal demand and energy analysis, ten visualizations for the current dataset, and executable Jupyter notebooks. Station analysis and Power BI integration remain planned.
 
 See the [project plan](docs/project_plan.md) for scope, metric definitions and implementation phases.
 
@@ -13,12 +13,12 @@ See the [project plan](docs/project_plan.md) for scope, metric definitions and i
 Place the original dataset at:
 
 ```text
-data/raw/EV_Dataset.csv
+data/raw/EV_Dataset_India.csv
 ```
 
-The supplied dataset contains **200,000 charging sessions and 38 original columns**.
+The supplied dataset contains **200,000 generated synthetic Indian charging sessions and 32 original columns**.
 
-**Source status:** shared by a team member; original source, collection methodology, reuse licence and timezone are unverified.
+**Source status:** generated synthetic Indian charging data supplied by the team. The CSV declares `Asia/Kolkata`; generator code, seed, sampling/loss assumptions and reuse licence were not supplied. The old `data/raw/EV_Dataset.csv` is preserved. See [dataset migration](docs/dataset_migration.md) for schema changes and Power BI impacts.
 
 Dataset CSVs are excluded from Git. Obtain the input file separately before running the project.
 
@@ -60,12 +60,12 @@ Run tests:
 Verify input fingerprints:
 
 ```bash
-sha256sum data/raw/EV_Dataset.csv data/processed/charging_sessions.csv
+sha256sum data/raw/EV_Dataset_India.csv data/processed/charging_sessions.csv
 ```
 
 ## Data Preparation
 
-The preparation pipeline validates session identity, timestamps, duration, calendar fields, station mappings, and energy/queue measurements.
+The preparation pipeline validates session identity, timestamps, duration, calendar fields, station/port mappings, arrivals, active charging, overlaps, and energy/queue measurements.
 
 It preserves the original CSV and exports:
 
@@ -85,7 +85,9 @@ It preserves the original CSV and exports:
 - Duration comparisons use a tolerance of 0.01 minute.
 - Missing fields, duration/calendar mismatches and station inconsistencies are flagged without guessed corrections.
 - Blank or whitespace-only fields are treated as missing. Other source text is preserved.
-- No identifier normalization, timezone conversion or measurement imputation is performed.
+- All four timestamps (arrival, start, charging end, release) are localized to `Asia/Kolkata`; exports retain day-first wall-time strings plus `Timezone`. No measurement imputation is performed.
+- Station mappings include area/location type, coordinates, ports and charger specifications. All participants in overlapping `[Session_Start, Session_End)` intervals on the same station/port are flagged.
+- Arrival <= start <= charging end <= session end and integer port assignment are validated. Recorded queue/active durations are checked against timestamps; energy limits use active charging hours, not port occupancy.
 
 Source row numbers identify CSV records, with the header counted as row 1. Removed duplicate copies are counted separately rather than repeated in the rejected export.
 
@@ -97,7 +99,10 @@ Source row numbers identify CSV records, with the header counted as row 1. Remov
 - `Weekday_Name`
 - `Is_Weekend`
 - `Year_Month`
-- `Calculated_Session_Duration_Min`
+- `Calculated_Session_Duration_Min` (port occupancy)
+- `Arrival_Date`, `Arrival_Hour`
+- `Calculated_Queue_Time_Min`, `Calculated_Active_Charging_Duration_Min`
+- `Post_Charging_Occupancy_Min`, `Station_Port_Key`
 
 Features are deterministically recomputed from parsed timestamps. Original timestamp formats remain unchanged.
 
@@ -158,7 +163,7 @@ See [demand methodology](docs/demand_methodology.md) for formulas, missing-energ
 
 ## Visualizations and Notebooks
 
-Seven figures are exported as **300-dpi PNG and SVG** files under:
+Ten figures are exported for the current dataset as **300-dpi PNG** files under:
 
 ```text
 outputs/demand/figures/
@@ -172,7 +177,12 @@ They cover:
 4. Weekday–hour heatmap
 5. Monthly demand
 6. Hourly and monthly recorded-energy profiles
-7. Monthly energy sensitivity comparison
+7. Location-type hourly percentage profiles
+8. Weekday variability box plots
+9. Time-period energy per session
+10. Charger-type energy/active/connected comparison
+
+The monthly sensitivity comparison remains available only when true/false plausibility flags provide a retained/excluded contrast. For this dataset all flags are false; validation counts are reported instead of a chart.
 
 The plotting CLI reads the existing summary tables. Optional arguments:
 
@@ -184,7 +194,7 @@ The plotting CLI reads the existing summary tables. Optional arguments:
 |---|---|
 | [01_preprocessing.ipynb](notebooks/01_preprocessing.ipynb) | Preparation workflow and quality summaries |
 | [02_demand_analysis.ipynb](notebooks/02_demand_analysis.ipynb) | Compact tables, linked charts and interpretations |
-| [03_demand_analysis_code_and_charts.ipynb](notebooks/03_demand_analysis_code_and_charts.ipynb) | Executable plotting code with seven embedded chart outputs |
+| [03_demand_analysis_code_and_charts.ipynb](notebooks/03_demand_analysis_code_and_charts.ipynb) | Executable plotting code with ten embedded chart outputs |
 
 Keep the repository’s `outputs/demand/figures/` directory when sharing the linked-chart notebook. The embedded-chart notebook can display its saved outputs without those image files; rerunning requires the documented data and dependencies.
 
@@ -201,31 +211,28 @@ The completed execution reports:
 | Exact duplicates removed | 0 |
 | Represented calendar days | 730 |
 | Average session starts/day | 273.97 |
-| Total recorded energy | 9,493,219.61 kWh |
-| Average recorded energy/valid-energy session | 47.47 kWh |
-| Weekday starts/day | 274.58 |
-| Weekend starts/day | 272.45 |
+| Total recorded energy | 3,014,172.81 kWh |
+| Average recorded energy/valid-energy session | 15.07 kWh |
+| Weekday starts/day | 277.05 |
+| Weekend starts/day | 266.25 |
 
-Observed starts span **1 January 2024, 00:00 to 30 December 2025, 23:53**.
+Observed starts span **1 January 2024, 01:53 to 30 December 2025, 23:53 (Asia/Kolkata)**.
 
-Hourly demand is nearly uniform: the relative index ranges from **0.97668 to 1.01760**. The highest aggregate count is at **08:00**, with 8,480 starts; the lowest is at **09:00**, with 8,139 starts.
+Hourly demand is no longer nearly uniform: relative index 0.10560–2.06376. Hour 09 has the most starts (17,198; 23.56/calendar day), versus hour 01 (880; 1.21/day). This is the generated sample's pattern, not evidence of real congestion or actual Indian charging behavior.
 
-Monthly demand ranges from **270.00 to 281.13 starts/day**. The highest month is partial December 2025, which should not be treated as evidence of a seasonal peak.
+Monthly starts/day range from 220.93 in 2024-09 to 326.17 in 2025-04. Partial boundary months: 2025-12. Partial coverage is not a missing-data marker; the synthetic differences do not establish real seasonality or a causal trend.
 
 See [Demand and Energy Findings](docs/member2_findings.md) for interpretations.
 
 ## Data Quality and Limitations
 
-- All 1,000 station IDs have multiple station names, cities and states. Station comparisons depend on identifier reliability; geographic recommendations are unsupported by these mappings.
-- Energy and queue values are numerically valid, but numerical validity does not establish measurement accuracy.
-- Energy plausibility concerns affect 49,101 sessions above battery capacity and 71,740 above nominal charger energy.
-- These checks overlap in 23,488 sessions, affecting **97,353 unique sessions**.
-- The sensitivity scenario excludes their union, retaining **102,647 sessions** and **3,648,439.11 kWh**.
-- This retains **51.32% of sessions** and **38.43% of recorded energy**. It is an alternative sample, not corrected or verified data.
-- Baseline session-demand counts remain unchanged.
-- Source provenance, licence, timezone and collection completeness remain unverified.
+- The 997 station IDs present have consistent name/city/state/area/location/port/charger mappings; no port overlaps or structural timestamp errors were found.
+- Energy and queue values are numerically valid. All energy values pass capacity, battery-level-delta and calculated active-power checks in this run.
+- The sensitivity scenario excludes no sessions: 200,000 sessions and 3,014,172.81 kWh are retained (100%). Baseline demand remains unchanged.
+- This is generated synthetic data; the patterns do not establish actual Indian behavior, measurement accuracy or real equipment availability.
+- Generator code, seed, sampling/loss assumptions and reuse licence were not supplied. Local timezone is explicitly Asia/Kolkata.
 - Supplied `Peak_Hour` labels are not used as proof of observed demand peaks.
-- Connected occupancy, active charging, delivered energy, session starts and queue time are different measurements.
+- Arrivals, session starts, port occupancy, active charging, delivered energy and queue time are distinct. See the migration notes for removed fields and Power BI refresh requirements.
 
 ## Research Basis
 
@@ -233,18 +240,18 @@ Baek, K., Lee, E., & Kim, J. (2024). *A dataset for multi-faceted analysis of el
 
 https://doi.org/10.1038/s41597-024-02942-9
 
-The project adapts the paper’s temporal charging-pattern analysis ideas. The paper’s dataset is separate from the supplied CSV. Our session-start metrics differ from its connection/coupling measurements; calendar normalization and the relative demand index are project design choices.
+The project adapts the paper’s temporal charging-pattern analysis ideas. The paper’s dataset is separate from the generated Indian CSV. Our session-start metrics differ from its connection/coupling measurements; calendar normalization and the relative demand index are project design choices.
 
 ## Verification
 
 The latest reported local verification includes:
 
-- **49 passing tests**
+- **68 passing tests**
 - Executed and validated notebooks
 - Independent session-count and energy reconciliation across all six baseline summary tables
 - Verified sensitivity partitions and temporal category ordering
-- Visual inspection of all seven figures
-- Unchanged raw and cleaned input hashes
+- Visual inspection of the regenerated figures
+- Both raw CSVs preserved; regenerated cleaned-data hash checked during analysis and notebook execution
 - Passing `git diff --check`
 
 These are local verification results, not a claim that GitHub Actions checks are configured.
@@ -254,3 +261,10 @@ These are local verification results, not a claim that GitHub Actions checks are
 See [team handoff](docs/team_handoff.md) for dataset transfer, reproduction commands, reference totals and integration guidance.
 
 Remaining project work includes station activity/congestion-indicator analysis and Power BI integration. Interactive dashboard measures should use appropriate session-level data and calendar denominators rather than applying fixed aggregate averages under incompatible filters.
+
+
+## Additional temporal comparisons
+
+Five new Power BI-ready CSVs are regenerated under `outputs/demand/`: `location_type_hourly.csv`, `daily_weekday_counts.csv`, `weekday_variability.csv`, `time_period_energy.csv`, and `charger_type_comparison.csv`. The location profile percentages sum to 100% within each represented type; weekday quartiles use the complete daily calendar. Per-session period energy uses five non-overlapping bins; charger summaries keep energy, active charging and connected occupancy separate and report supplied-duration mismatches.
+
+Both analysis notebooks now include code, inline charts and calculated interpretations for these four analyses. The code-and-charts notebook embeds ten charts for the current dataset. The exporter produces exactly one PNG per intended chart and removes only its known generated vector copies or inactive sensitivity PNG, preserving unrelated user files. No SVG files are required. See the methodology for synthetic assumptions and the handoff for Power BI grain/filter rules.
