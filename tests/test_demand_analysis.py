@@ -16,9 +16,13 @@ from src.demand_analysis import (
 def sessions(dates, energies=None, flags=None):
     """Small cleaned-export fixture with documented energy status/boolean text."""
     energies = ["10"] * len(dates) if energies is None else energies
+    starts = pd.to_datetime(pd.Series(dates, dtype="string"), format="%d-%m-%Y %H:%M", errors="coerce")
     frame = pd.DataFrame({
         "Session_ID": [f"S{i}" for i in range(len(dates))],
-        "Session_Start": dates, "Energy_Delivered_kWh": energies,
+        "Session_Start": dates, "Energy_Delivered_kWh": energies, "Timezone": "Asia/Kolkata",
+        "Session_End": (starts + pd.Timedelta(minutes=60)).dt.strftime("%d-%m-%Y %H:%M"),
+        "Charging_End": (starts + pd.Timedelta(minutes=30)).dt.strftime("%d-%m-%Y %H:%M"),
+        "Location_Type": "Workplace", "Charger_Type": "AC Fast",
         FLAGS[0]: ["False"] * len(dates), FLAGS[1]: ["False"] * len(dates),
     })
     frame["Energy_Delivered_kWh_Validity"] = numeric_status(frame.Energy_Delivered_kWh)[1]
@@ -91,7 +95,7 @@ def test_zero_invalid_energy_and_declared_status_mismatches():
     assert summary["input_validation"]["energy_validity_counts"] == {
         "valid": 2, "missing": 1, "nonfinite": 2, "negative": 1, "nonnumeric": 1}
     assert summary["total_recorded_energy_kwh"] == 2.5
-    for table in [tables[key] for key in tables if key != "monthly_energy_sensitivity"]:
+    for table in [tables[key] for key in summary["reconciliation"]["tables"]]:
         assert table.session_count.sum() == 7
         assert table.valid_energy_session_count.sum() == 2
         assert table.invalid_energy_session_count.sum() == 5
@@ -158,7 +162,7 @@ def test_no_valid_energy_strict_json_and_deterministic_exports(tmp_path):
     assert summary["total_recorded_energy_kwh"] is None
     assert summary["avg_recorded_energy_per_day_kwh"] is None
     assert summary["reconciliation"]["all_passed"]
-    assert len(list(output.glob("*.csv"))) == 7
+    assert len(list(output.glob("*.csv"))) == 12
     outputs = {p.name: p.read_bytes() for p in output.iterdir()}
     run_analysis(source, output, raw)
     assert outputs == {p.name: p.read_bytes() for p in output.iterdir()}
@@ -203,8 +207,99 @@ def test_all_plausibility_exclusions_keep_demand_and_missing_retained_energy():
 def test_reconciliation_detects_independent_count_or_energy_corruption(column):
     frame = sessions(["01-01-2024 00:00", "03-01-2024 00:00"], ["0.1", "0.2"])
     data, _ = validate_sessions(frame)
-    tables, _ = analyze_sessions(frame)
-    sensitivity = tables.pop("monthly_energy_sensitivity")
+    all_tables, report = analyze_sessions(frame)
+    sensitivity = all_tables["monthly_energy_sensitivity"]
+    tables = {name: all_tables[name] for name in report["reconciliation"]["tables"]}
     tables["hourly_demand"].loc[0, column] += 1
     with pytest.raises(ValueError, match="reconciliation failed"):
         reconcile_tables(data, build_calendar(data.Session_Start), tables, sensitivity)
+
+
+def test_indian_timezone_and_new_metadata_are_preserved():
+    frame = sessions(["01-01-2024 00:00"])
+    frame['Area'] = 'Central'
+    frame['Location_Type'] = 'Residential'
+    frame['Port_ID'] = '2'
+    frame['Arrival_Time'] = '31-12-2023 23:55'
+    frame['Active_Charging_Duration_Min'] = '30'
+    data, _ = validate_sessions(frame)
+    assert str(data.Session_Start.dt.tz) == 'Asia/Kolkata'
+    assert data.iloc[0].Charging_Date == '2024-01-01'
+    assert data.iloc[0].Area == 'Central'
+    assert data.iloc[0].Port_ID == '2'
+    with pytest.raises(ValueError, match='Timezone must be Asia/Kolkata'):
+        analyze_sessions(frame.assign(Timezone='UTC'))
+
+
+def test_location_percentages_and_counts_use_within_location_denominators():
+    frame = sessions(["01-01-2024 00:00", "01-01-2024 01:00", "02-01-2024 01:00", "02-01-2024 02:00"])
+    frame['Location_Type'] = ['Workplace', 'Workplace', 'Workplace', 'Retail']
+    tables, report = analyze_sessions(frame)
+    result = tables['location_type_hourly'].set_index(['Location_Type', 'Charging_Hour'])
+    assert result.loc[('Workplace', 0), 'session_count'] == 1
+    assert result.loc[('Workplace', 1), 'session_percentage'] == pytest.approx(200 / 3)
+    assert result.loc[('Retail', 2), 'session_percentage'] == 100
+    assert result.loc[('Workplace', 2), 'session_count'] == 0
+    assert pd.isna(result.loc[('Highway', 0), 'session_percentage'])
+    totals = result.groupby(level=0).session_percentage.sum(min_count=1)
+    assert totals.loc[['Workplace', 'Retail']].tolist() == pytest.approx([100, 100])
+    assert all(report['additional_reconciliation'].values())
+
+
+def test_weekday_boxplot_observations_and_quartiles_include_zero_dates():
+    frame = sessions(['01-01-2024 08:00', '15-01-2024 08:00', '15-01-2024 09:00'])
+    tables, _ = analyze_sessions(frame)
+    observations = tables['daily_weekday_counts']
+    result = tables['weekday_variability'].set_index('Weekday_Name')
+    assert len(observations) == 15
+    assert observations.session_count.sum() == 3
+    assert observations.loc[observations.Charging_Date.eq('2024-01-08'), 'session_count'].iloc[0] == 0
+    # Three Mondays contain [1, 0, 2]; other weekday counts must not enter these quartiles.
+    assert result.loc['Monday', 'represented_days'] == 3
+    assert result.loc['Monday', 'median_sessions'] == 1
+    assert result.loc['Monday', 'q1_sessions'] == 0.5
+    assert result.loc['Monday', 'q3_sessions'] == 1.5
+    assert result.loc['Tuesday', 'represented_days'] == 2
+    assert result.loc['Tuesday', 'median_sessions'] == 0
+
+
+def test_period_boundaries_cover_every_hour_and_exclude_only_invalid_energy():
+    dates = [f'01-01-2024 {hour:02d}:00' for hour in range(24)]
+    frame = sessions(dates, ['0', '', 'bad', 'NaN', '-1', '5'] + ['10'] * 18)
+    tables, _ = analyze_sessions(frame)
+    result = tables['time_period_energy'].set_index('Time_Period')
+    assert result.session_count.tolist() == [6, 6, 5, 5, 2]
+    assert result.valid_energy_session_count.tolist() == [2, 6, 5, 5, 2]
+    assert result.loc['Overnight', 'total_recorded_energy_kwh'] == 5
+    assert result.loc['Overnight', 'mean_energy_kwh'] == 2.5
+    assert result.loc['Overnight', 'median_energy_kwh'] == 2.5
+    assert result.session_count.sum() == 24
+    assert result.start_hour_inclusive.tolist() == [0, 6, 12, 17, 22]
+    assert result.end_hour_exclusive.tolist() == [6, 12, 17, 22, 24]
+
+
+def test_charger_energy_and_durations_are_separate_and_recomputed():
+    frame = sessions(['01-01-2024 00:00', '01-01-2024 01:00', '01-01-2024 02:00'], ['0', '10', 'bad'])
+    frame['Charger_Type'] = ['DC Fast', 'DC Fast', 'AC Slow']
+    frame['Charging_End'] = ['01-01-2024 00:10', '01-01-2024 01:20', '01-01-2024 02:30']
+    frame['Active_Charging_Duration_Min'] = ['999', '20', '30']
+    frame['Session_Duration_Min'] = ['60', '60', '60']
+    tables, report = analyze_sessions(frame)
+    result = tables['charger_type_comparison'].set_index('Charger_Type')
+    assert result.loc['DC Fast', 'session_count'] == 2
+    assert result.loc['DC Fast', 'mean_energy_kwh'] == result.loc['DC Fast', 'median_energy_kwh'] == 5
+    assert result.loc['DC Fast', 'mean_active_charging_duration_min'] == 15
+    assert result.loc['DC Fast', 'mean_connected_duration_min'] == 60
+    assert result.loc['DC Fast', 'Active_Charging_Duration_Min_mismatch_count'] == 1
+    assert result.loc['AC Slow', 'valid_energy_session_count'] == 0
+    assert pd.isna(result.loc['AC Slow', 'mean_energy_kwh'])
+    assert result.loc['AC Slow', 'mean_active_charging_duration_min'] == 30
+    assert report['input_validation']['duration_consistency']['Active_Charging_Duration_Min']['mismatches'] == 1
+
+
+def test_unknown_categories_and_invalid_charging_intervals_fail():
+    frame = sessions(['01-01-2024 00:00'])
+    with pytest.raises(ValueError, match='Location_Type'):
+        analyze_sessions(frame.assign(Location_Type='unknown'))
+    with pytest.raises(ValueError, match='Charging_End <= Session_End'):
+        analyze_sessions(frame.assign(Charging_End='01-01-2024 02:00'))

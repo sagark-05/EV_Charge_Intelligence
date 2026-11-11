@@ -7,24 +7,31 @@ from pathlib import Path
 import pandas as pd
 
 try:  # Support both `python -m src.demand_analysis` and direct script execution.
-    from .data_preparation import coverage_summary, file_hash, numeric_status, parse_timestamp
+    from .data_preparation import coverage_summary, file_hash, numeric_status, parse_timestamp, TIMEZONE, DEFAULT_INPUT
 except ImportError:
-    from data_preparation import coverage_summary, file_hash, numeric_status, parse_timestamp
+    from data_preparation import coverage_summary, file_hash, numeric_status, parse_timestamp, TIMEZONE, DEFAULT_INPUT
 
 ENERGY = "Energy_Delivered_kWh"
 FLAGS = ["Energy_Exceeds_Battery_Capacity", "Energy_Exceeds_Nominal_Charger_Energy"]
 STATUSES = ["valid", "missing", "nonnumeric", "nonfinite", "negative"]
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-REQUIRED = ["Session_ID", "Session_Start", ENERGY, ENERGY + "_Validity", *FLAGS]
+LOCATION_TYPES = ["Workplace", "Residential", "Retail", "Highway"]
+CHARGER_TYPES = ["AC Slow", "AC Fast", "DC Fast"]
+TIME_PERIODS = ["Overnight", "Morning", "Afternoon", "Evening", "Late night"]
+PERIOD_BOUNDARIES = [0, 6, 12, 17, 22, 24]
+EXTRA_TABLE_NAMES = ["location_type_hourly", "daily_weekday_counts", "weekday_variability",
+                     "time_period_energy", "charger_type_comparison"]
+REQUIRED = ["Session_ID", "Session_Start", "Session_End", "Charging_End", "Location_Type",
+            "Charger_Type", "Timezone", ENERGY, ENERGY + "_Validity", *FLAGS]
 LIMITATIONS = [
-    "shared by team member; original source and licence unverified; collection methodology and timezone unverified.",
+    "Generated synthetic Indian charging data; generator code, seed and reuse licence not supplied. Timestamps use Asia/Kolkata.",
     "Complete collection across the inclusive date range, including zero-session dates, is assumed, not verified uptime.",
     "First/last days may be partially observed; full calendar boundary months do not prove full collection.",
     "Full recorded session energy is assigned to session-start time, not a measured hourly electricity-load profile.",
     "Session counts and the project-defined relative index do not establish congestion or true utilization; Peak_Hour labels are unused.",
     "Sensitivity exclusions can change sample composition; this is not corrected or ground-truth data.",
     "Blank plausibility flags mean not evaluable; such rows are retained unless the other flag is true.",
-    "Station mappings are inconsistent; no station or geographic comparisons are made.",
+    "Station consistency is checked in preparation; synthetic station mappings do not establish real locations or capacity availability.",
 ]
 
 
@@ -54,6 +61,17 @@ def validate_sessions(raw):
     start = parse_timestamp(raw.Session_Start.astype("string"))
     if start.isna().any():
         raise ValueError(f"Session_Start: {int(start.isna().sum())} invalid timestamps; expected DD-MM-YYYY HH:MM.")
+    if not raw.Timezone.eq(TIMEZONE).all():
+        raise ValueError("Timezone must be Asia/Kolkata for every session.")
+    for column, categories in [("Location_Type", LOCATION_TYPES), ("Charger_Type", CHARGER_TYPES)]:
+        if not raw[column].isin(categories).all():
+            raise ValueError(f"{column} must contain only documented categories: {', '.join(categories)}.")
+    end = parse_timestamp(raw.Session_End.astype("string"))
+    charging_end = parse_timestamp(raw.Charging_End.astype("string"))
+    if end.isna().any() or charging_end.isna().any():
+        raise ValueError("Session_End and Charging_End must be valid DD-MM-YYYY HH:MM timestamps.")
+    if (end.lt(start) | charging_end.lt(start) | charging_end.gt(end)).any():
+        raise ValueError("Require Session_Start <= Charging_End <= Session_End.")
     declared = raw[ENERGY + "_Validity"].astype("string")
     if not declared.isin(STATUSES).all():
         raise ValueError("Energy_Delivered_kWh_Validity contains missing or undocumented status values.")
@@ -66,10 +84,27 @@ def validate_sessions(raw):
         "Day_Type": start.dt.dayofweek.ge(5).map({False: "Weekday", True: "Weekend"}),
         "Valid_Energy": status.eq("valid"), "Recorded_Energy_kWh": energy.where(status.eq("valid")),
     })
+    data["Active_Duration_Min"] = (charging_end - start).dt.total_seconds() / 60
+    data["Connected_Duration_Min"] = (end - start).dt.total_seconds() / 60
+    duration_mismatches = {}
+    for supplied, calculated in [("Active_Charging_Duration_Min", "Active_Duration_Min"),
+                                  ("Session_Duration_Min", "Connected_Duration_Min")]:
+        mismatch = pd.Series(False, index=data.index)
+        if supplied in raw:
+            recorded, recorded_status = numeric_status(raw[supplied])
+            mismatch = recorded_status.ne("valid") | recorded.sub(data[calculated]).abs().gt(0.01)
+        duration_mismatches[supplied] = {"supplied": supplied in raw, "mismatches": int(mismatch.sum())}
+        data[supplied + "_Mismatch"] = mismatch
+    for column in ["Area", "Location_Type", "Charger_Type", "Port_ID", "Port_Count", "Arrival_Time", "Charging_End",
+                   "Active_Charging_Duration_Min", "Calculated_Active_Charging_Duration_Min", "Timezone"]:
+        if column in raw:
+            data[column] = raw[column]
     for flag in FLAGS:
         data[flag] = parse_boolean_flags(raw[flag], flag)
     data["Sensitivity_Excluded"] = data[FLAGS].fillna(False).any(axis=1)
     metadata = {
+        "duration_consistency": duration_mismatches,
+        "duration_policy": "Recompute active and connected minutes from local timestamps; report supplied-field mismatches without discarding demand rows.",
         "energy_validity_counts": {label: int(status.eq(label).sum()) for label in STATUSES},
         "declared_energy_validity_mismatch_count": int(declared.ne(status).sum()),
         "energy_policy": "Recomputed numeric status determines eligibility; declared-status mismatches are reported, never used to drop demand rows.",
@@ -163,6 +198,101 @@ def monthly_sensitivity(data, monthly):
     return result
 
 
+
+def location_hourly_profile(data):
+    """Percentages are conditional on each location type, with all 24 hours retained."""
+    index = pd.MultiIndex.from_product([LOCATION_TYPES, range(24)], names=["Location_Type", "Charging_Hour"])
+    counts = data.groupby(["Location_Type", "Charging_Hour"]).size().reindex(index, fill_value=0)
+    result = counts.rename("session_count").reset_index()
+    totals = data.groupby("Location_Type").size()
+    result["location_session_count"] = result.Location_Type.map(totals).fillna(0).astype("int64")
+    result["session_percentage"] = result.session_count / result.location_session_count.replace(0, float("nan")) * 100
+    return result
+
+
+def weekday_variability(daily, calendar):
+    """Use the existing complete daily calendar, never just dates having sessions."""
+    observations = daily[["Charging_Date", "session_count"]].merge(
+        calendar[["Charging_Date", "Weekday_Index"]], on="Charging_Date", validate="one_to_one")
+    observations["Weekday_Name"] = observations.Weekday_Index.map(dict(enumerate(WEEKDAYS)))
+    grouped = observations.groupby("Weekday_Index").session_count
+    result = grouped.agg(represented_days="size", session_count="sum", median_sessions="median").reindex(range(7))
+    result["q1_sessions"] = grouped.quantile(0.25).reindex(range(7))
+    result["q3_sessions"] = grouped.quantile(0.75).reindex(range(7))
+    for column in ["represented_days", "session_count"]:
+        result[column] = result[column].fillna(0).astype("int64")
+    result = result.reset_index()
+    result.insert(1, "Weekday_Name", WEEKDAYS)
+    return observations, result
+
+
+def grouped_energy_statistics(data, key, categories):
+    """Shared energy count, total, mean and median calculations for new comparisons."""
+    grouped = data.groupby(key, sort=False)
+    result = grouped.agg(session_count=("Session_ID", "size"),
+                         valid_energy_session_count=("Valid_Energy", "sum"),
+                         mean_energy_kwh=("Recorded_Energy_kWh", "mean"),
+                         median_energy_kwh=("Recorded_Energy_kWh", "median"))
+    result["total_recorded_energy_kwh"] = grouped.Recorded_Energy_kWh.sum(min_count=1)
+    result = result.reindex(pd.Index(categories, name=key))
+    for column in ["session_count", "valid_energy_session_count"]:
+        result[column] = result[column].fillna(0).astype("int64")
+    result["invalid_energy_session_count"] = result.session_count - result.valid_energy_session_count
+    return result.reset_index()
+
+
+def time_period_energy(data):
+    """Half-open hour bins cover every start; unequal lengths do not affect per-session means."""
+    periods = pd.cut(data.Charging_Hour, bins=PERIOD_BOUNDARIES, labels=TIME_PERIODS, right=False)
+    result = grouped_energy_statistics(data.assign(Time_Period=periods.astype("string")), "Time_Period", TIME_PERIODS)
+    result.insert(1, "start_hour_inclusive", PERIOD_BOUNDARIES[:-1])
+    result.insert(2, "end_hour_exclusive", PERIOD_BOUNDARIES[1:])
+    return result
+
+
+def charger_type_comparison(data):
+    """Separate delivered energy, active charging time and connected occupancy."""
+    result = grouped_energy_statistics(data, "Charger_Type", CHARGER_TYPES).set_index("Charger_Type")
+    grouped = data.groupby("Charger_Type")
+    for source, label in [("Active_Duration_Min", "active_charging_duration"),
+                          ("Connected_Duration_Min", "connected_duration")]:
+        result["valid_" + label + "_session_count"] = grouped[source].count().reindex(CHARGER_TYPES, fill_value=0)
+        result["mean_" + label + "_min"] = grouped[source].mean().reindex(CHARGER_TYPES)
+        result["median_" + label + "_min"] = grouped[source].median().reindex(CHARGER_TYPES)
+    for supplied in ["Active_Charging_Duration_Min", "Session_Duration_Min"]:
+        result[supplied + "_mismatch_count"] = grouped[supplied + "_Mismatch"].sum().reindex(CHARGER_TYPES, fill_value=0)
+    return result.reset_index()
+
+
+def sensitivity_has_variation(table):
+    """A comparison needs both retained and excluded valid-energy observations."""
+    return bool(table.excluded_valid_energy_session_count.sum() > 0 and table.retained_valid_energy_session_count.sum() > 0)
+
+
+def additional_analyses(data, daily, calendar):
+    """Build and reconcile the four additional analyses and daily boxplot observations."""
+    observations, variability = weekday_variability(daily, calendar)
+    tables = {"location_type_hourly": location_hourly_profile(data),
+              "daily_weekday_counts": observations, "weekday_variability": variability,
+              "time_period_energy": time_period_energy(data),
+              "charger_type_comparison": charger_type_comparison(data)}
+    checks = {name + "_session_count": int(table.session_count.sum()) == len(data) for name, table in tables.items()}
+    percentages = tables["location_type_hourly"].groupby("Location_Type").session_percentage.sum(min_count=1)
+    present = data.Location_Type.unique()
+    checks["location_percentages"] = bool(percentages.loc[present].sub(100).abs().lt(1e-8).all())
+    checks["complete_calendar"] = observations.Charging_Date.tolist() == calendar.Charging_Date.tolist()
+    checks["weekday_denominators"] = int(variability.represented_days.sum()) == len(calendar)
+    expected_energy = data.Recorded_Energy_kWh.sum(min_count=1)
+    for name in ["time_period_energy", "charger_type_comparison"]:
+        table = tables[name]
+        total = table.total_recorded_energy_kwh.sum(min_count=1)
+        checks[name + "_valid_energy_count"] = int(table.valid_energy_session_count.sum()) == int(data.Valid_Energy.sum())
+        checks[name + "_energy_total"] = bool((pd.isna(total) and pd.isna(expected_energy)) or math.isclose(total, expected_energy, rel_tol=1e-10, abs_tol=1e-6))
+    if not all(checks.values()):
+        raise ValueError("Additional-analysis reconciliation failed.")
+    return tables, checks
+
+
 def reconcile_tables(data, calendar, tables, sensitivity):
     """Fail on count, energy, dimension, ordering or sensitivity reconciliation errors."""
     expected_count = len(data)
@@ -246,6 +376,19 @@ def analyze_sessions(raw):
         "reconciliation": reconciliation, "limitations": LIMITATIONS,
     }
     tables["monthly_energy_sensitivity"] = sensitivity
+    extra, checks = additional_analyses(data, tables["daily_demand"], calendar)
+    tables.update(extra)
+    summary["additional_reconciliation"] = checks
+    summary["output_row_counts"] = {name: len(table) for name, table in tables.items()}
+    summary["sensitivity"]["comparison_informative"] = sensitivity_has_variation(sensitivity)
+    summary["additional_methods"] = {
+        "location_percentage": "100 * location-hour starts / all starts for that location type. Empty location categories have undefined percentages.",
+        "weekday_variability": "Daily counts on the complete calendar; pandas linear quartiles; boxplots use 1.5 IQR whiskers.",
+        "periods": dict(zip(TIME_PERIODS, ["[00,06)", "[06,12)", "[12,17)", "[17,22)", "[22,24)"])),
+        "energy_attribution": "Whole-session valid energy assigned to its start period; per-session averages, not hourly electricity load.",
+        "durations": "Active = Charging_End - Session_Start; connected = Session_End - Session_Start. Finite supplied minute fields compared with 0.01 minute tolerance.",
+        "synthetic": "Location categories and separate active/connected intervals are documented simulation contracts; generator hour weights/distributions were not supplied, so observed patterns are not asserted as generator probabilities or real behavior.",
+    }
     return tables, summary
 
 
@@ -298,7 +441,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=root / "outputs/demand")
     parser.add_argument("--raw-input", type=Path, help="Optional raw CSV to fingerprint; default uses the repository raw CSV if present.")
     args = parser.parse_args()
-    raw_path = args.raw_input or (root / "data/raw/EV_Dataset.csv" if (root / "data/raw/EV_Dataset.csv").is_file() else None)
+    raw_path = args.raw_input or (DEFAULT_INPUT if DEFAULT_INPUT.is_file() else None)
     try:
         summary = run_analysis(args.input, args.output_dir, raw_path)
     except (OSError, ValueError, pd.errors.ParserError) as error:

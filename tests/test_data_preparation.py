@@ -13,7 +13,12 @@ def session():
             "Day_of_Week": "Wednesday", "Month": "3", "Station_ID": "ST1",
             "Station_Name": "Station One", "City": "Kochi", "State": "Kerala",
             "Energy_Delivered_kWh": "10", "Queue_Time_Min": "0",
-            "Vehicle_Battery_kWh": "60", "Charger_Power_kW": "50"}
+            "Vehicle_Battery_kWh": "50", "Charger_Power_kW": "50",
+            "Area": "Central", "Location_Type": "Workplace", "Port_Count": "4", "Port_ID": "1",
+            "Arrival_Time": "06-03-2024 03:40", "Charging_End": "06-03-2024 04:28",
+            "Active_Charging_Duration_Min": "48", "Timezone": "Asia/Kolkata",
+            "Battery_Level_Start": "20", "Battery_Level_End": "40",
+            "Latitude": "10", "Longitude": "76", "Charger_Type": "DC Fast"}
 
 
 def test_explicit_day_first_and_strict_shape():
@@ -27,7 +32,7 @@ def test_explicit_day_first_and_strict_shape():
 
 def test_duplicates_conflicts_and_reconciliation(session):
     records = [session, session.copy(), dict(session, City="Delhi"),
-               dict(session, Session_ID="S2"), dict(session, Session_ID=" "),
+               dict(session, Session_ID="S2", Port_ID="2"), dict(session, Session_ID=" "),
                dict(session, Session_ID="S3", Session_Start="bad"),
                dict(session, Session_ID="S4", Session_End="06-03-2024 02:00")]
     accepted, rejected, flagged, report = prepare_data(pd.DataFrame(records))
@@ -79,7 +84,7 @@ def test_station_conflicts_flag_every_affected_row(session):
     rows = [session, dict(session, Session_ID="S2", Station_Name="Other", City="Delhi", State="Delhi")]
     accepted, rejected, flagged, report = prepare_data(pd.DataFrame(rows))
     assert len(accepted) == 2 and rejected.empty
-    assert report["station_ids_with_multiple_values"] == {"Station_Name": 1, "City": 1, "State": 1}
+    assert all(report["station_ids_with_multiple_values"][column] == 1 for column in ["Station_Name", "City", "State"])
     assert flagged.Quality_Reasons.str.contains("station_multiple:State").all()
 
 
@@ -89,7 +94,8 @@ def test_station_conflicts_flag_every_affected_row(session):
     ("06-01-2024 00:00", "06-01-2024 00:00", "2024-01-06", 0, 5, "Saturday", True, "2024-01", 0),
 ])
 def test_derived_boundaries(session, start, end, date, hour, index, name, weekend, month, minutes):
-    row = dict(session, Session_Start=start, Session_End=end, Charging_Date="stale", Charging_Hour="99")
+    row = dict(session, Session_Start=start, Session_End=end, Arrival_Time=start, Charging_End=end,
+               Active_Charging_Duration_Min=str(minutes), Charging_Date="stale", Charging_Hour="99")
     accepted, _, _, report = prepare_data(pd.DataFrame([row]))
     result = accepted.iloc[0]
     assert result.Charging_Date == date
@@ -137,8 +143,10 @@ def test_plausibility_is_separate_from_validity(session):
 
 
 def test_coverage_inclusive_dates_and_empty_acceptance(session):
-    rows = [dict(session, Session_Start="31-12-2023 23:30", Session_End="01-01-2024 00:30"),
-            dict(session, Session_ID="S2", Session_Start="02-01-2024 10:00", Session_End="02-01-2024 11:00")]
+    rows = [dict(session, Session_Start="31-12-2023 23:30", Session_End="01-01-2024 00:30",
+                 Arrival_Time="31-12-2023 23:30", Charging_End="01-01-2024 00:30"),
+            dict(session, Session_ID="S2", Session_Start="02-01-2024 10:00", Session_End="02-01-2024 11:00",
+                 Arrival_Time="02-01-2024 10:00", Charging_End="02-01-2024 11:00")]
     first = prepare_data(pd.DataFrame(rows))
     second = prepare_data(pd.DataFrame(rows))
     pd.testing.assert_frame_equal(first[0], second[0])
@@ -181,3 +189,83 @@ def test_notebook_path_bootstrap(directory, monkeypatch):
     exec(bootstrap.split("report = run_pipeline")[0], namespace)
     assert namespace["ROOT"] == root
     assert callable(namespace["run_pipeline"])
+
+
+def test_timezone_and_new_time_features(session):
+    from src.data_preparation import TIMEZONE
+    result = parse_timestamp(pd.Series(["01-01-2024 00:00"]))
+    assert str(result.dt.tz) == TIMEZONE
+    row = dict(session, Arrival_Time="06-03-2024 03:30", Charging_End="06-03-2024 04:00",
+               Active_Charging_Duration_Min="20", Queue_Time_Min="10")
+    accepted, rejected, _, report = prepare_data(pd.DataFrame([row]))
+    assert rejected.empty
+    record = accepted.iloc[0]
+    assert record.Calculated_Queue_Time_Min == 10
+    assert record.Calculated_Active_Charging_Duration_Min == 20
+    assert record.Post_Charging_Occupancy_Min == 28
+    assert record.Arrival_Hour == 3
+    assert record.Station_Port_Key == "ST1/1"
+    assert report['coverage']['earliest_session_start'] == row['Session_Start']
+
+
+@pytest.mark.parametrize("changes,reason", [
+    ({"Timezone": "UTC"}, "invalid_timezone"),
+    ({"Arrival_Time": "bad"}, "invalid_arrival_time"),
+    ({"Arrival_Time": "06-03-2024 03:50"}, "arrival_after_session_start"),
+    ({"Charging_End": "06-03-2024 04:29"}, "charging_end_outside_session"),
+    ({"Port_ID": "5"}, "invalid_port_assignment"),
+    ({"Port_ID": "1.5"}, "invalid_port_assignment"),
+    ({"Port_ID": "inf"}, "invalid_port_assignment"),
+    ({"Station_ID": ""}, "missing_station_id"),
+])
+def test_new_structural_errors_are_quarantined(session, changes, reason):
+    accepted, rejected, _, report = prepare_data(pd.DataFrame([dict(session, **changes)]))
+    assert accepted.empty and len(rejected) == 1
+    assert reason in rejected.iloc[0].Quality_Reasons
+    assert report['reconciliation']['balanced']
+
+
+def test_all_nested_port_overlaps_flagged_and_touching_allowed(session):
+    def row(identifier, start, end, port="1"):
+        return dict(session, Session_ID=identifier, Session_Start=f"06-03-2024 {start}",
+                    Arrival_Time=f"06-03-2024 {start}", Session_End=f"06-03-2024 {end}",
+                    Charging_End=f"06-03-2024 {end}", Port_ID=port)
+    rows = [row('A', '03:00', '06:00'), row('B', '03:10', '03:20'), row('C', '04:00', '04:10'),
+            row('D', '06:00', '07:00'), row('E', '03:00', '06:00', '2')]
+    accepted, rejected, _, report = prepare_data(pd.DataFrame(rows))
+    assert len(accepted) == 5 and rejected.empty
+    assert accepted.Port_Overlap_Flag.tolist() == [True, True, True, False, False]
+    assert report['port_validation']['overlapping_rows'] == 3
+    assert report['port_validation']['overlapping_station_port_pairs'] == 1
+
+
+def test_active_charging_energy_limit_and_measurement_flags(session):
+    row = dict(session, Charging_End="06-03-2024 03:46", Active_Charging_Duration_Min="7",
+               Queue_Time_Min="1", Energy_Delivered_kWh="10")
+    accepted, rejected, flagged, report = prepare_data(pd.DataFrame([row]))
+    assert len(accepted) == 1 and rejected.empty
+    # 50 kW * 6/60 h = 5 kWh; using 48 occupancy minutes would incorrectly allow 40 kWh.
+    assert bool(accepted.iloc[0].Energy_Exceeds_Nominal_Charger_Energy)
+    assert 'active_charging_duration_mismatch' in flagged.iloc[0].Quality_Reasons
+    assert 'queue_time_mismatch' in flagged.iloc[0].Quality_Reasons
+    assert accepted.iloc[0].Energy_Delivered_kWh_Validity == 'valid'
+
+
+def test_area_location_and_port_count_station_consistency(session):
+    rows = [session, dict(session, Session_ID='S2', Port_ID='2', Area='Other',
+                          Location_Type='Retail', Port_Count='6')]
+    _, rejected, flagged, report = prepare_data(pd.DataFrame(rows))
+    assert rejected.empty
+    for field in ['Area', 'Location_Type', 'Port_Count']:
+        assert report['station_ids_with_multiple_values'][field] == 1
+        assert flagged.Quality_Reasons.str.contains('station_multiple:' + field).all()
+
+
+def test_energy_delta_and_battery_level_validation(session):
+    rows = [dict(session, Energy_Delivered_kWh='9'),
+            dict(session, Session_ID='S2', Port_ID='2', Battery_Level_End='101')]
+    accepted, rejected, flagged, report = prepare_data(pd.DataFrame(rows))
+    assert len(accepted) == 2 and rejected.empty
+    assert 'energy_battery_delta_mismatch' in flagged.iloc[0].Quality_Reasons
+    assert 'invalid_battery_levels' in flagged.iloc[1].Quality_Reasons
+    assert report['reason_counts']['energy_battery_delta_mismatch'] == 1
